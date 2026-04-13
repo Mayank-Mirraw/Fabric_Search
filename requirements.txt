@@ -1,0 +1,9 @@
+torch
+torchvision
+transformers
+faiss-cpu
+streamlit
+Pillow
+numpy
+pandas
+loguru
