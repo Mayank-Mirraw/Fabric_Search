@@ -19,4 +19,4 @@ An internal automation tool designed for Mirraw to match designer fabric request
 4. Run `python app/app.py` to start the service.
 
 ---
-*Built with ❤️ at Mirraw*
+
