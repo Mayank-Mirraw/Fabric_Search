@@ -1,24 +1,13 @@
-# Virtual Environment
+# Ignore the actual images
+data/catalog/
+
+# Ignore the FAISS index and SQLite database
+data/index/
+*.index
+*.db
+
+# Ignore environment and logs
 venv/
-ENV/
-env/
+logs/
+__pycache__/
 .env
-
-# Python bytecode
-**/__pycache__/
-*.py[cod]
-*$py.class
-
-# IDEs and Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Large data/model files (common in search/ML projects)
-*.log
-*.sqlite3

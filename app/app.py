@@ -43,7 +43,8 @@ from core.searcher import FabricSearcher
 from core.indexer import index_vendor_images
 from core.database import (
     initialize_database, get_all_vendors,
-    get_database_stats, update_fabric_details
+    get_database_stats, update_fabric_details,
+    get_connection
 )
 from utils.logger import get_logger
 
@@ -161,17 +162,25 @@ with tab1:
                     st.markdown(f"**Price:** ₹{result['price']}" if result['price'] else "**Price:** Not set")
 
                     # 3. Use st.form to stop typing from triggering a refresh
+                    # 3. Use st.form to stop typing from triggering a refresh
                     with st.expander("✏️ Update after order call"):
-                        with st.form(key=f"form_{result['fabric_id']}"):
+                        
+                        # FIX 1: Add _match_{i} to the form key
+                        with st.form(key=f"form_{result['fabric_id']}_match_{i}"):
+                            
                             new_price = st.number_input(
                                 "Update Price (₹)",
                                 min_value=0.0,
                                 value=float(result["price"]) if result["price"] else 0.0,
-                                step=10.0
+                                step=10.0,
+                                # FIX 2: Add a unique key to the number input
+                                key=f"price_input_{result['fabric_id']}_match_{i}" 
                             )
                             new_code = st.text_input(
                                 "Update Fabric Code",
-                                value=result["fabric_code"] or ""
+                                value=result["fabric_code"] or "",
+                                # FIX 3: Add a unique key to the text input
+                                key=f"code_input_{result['fabric_id']}_match_{i}"
                             )
                             
                             # st.form_submit_button replaces standard st.button inside forms
@@ -297,37 +306,44 @@ with tab2:
     st.divider()
     st.subheader("📄 Import from PDF Catalog")
 
-    uploaded_pdf = st.file_uploader(
-        "Upload vendor PDF catalog",
+    uploaded_pdfs = st.file_uploader(
+        "Upload vendor PDF catalogs (multiple allowed)",
         type=["pdf"],
-        key="pdf_upload"
+        key="pdf_upload",
+        accept_multiple_files=True  # this is the only change for multi-upload
     )
 
-    remove_bg = st.checkbox(
-        "Remove background from images",
-        value=False,
-        help="Enables rembg background removal. Slower but improves search accuracy for images with solid backgrounds."
-    )
-
-    if st.button("📥 Parse & Index PDF", type="primary"):
-        if not uploaded_pdf:
-            st.error("Please upload a PDF first.")
+    if st.button("📥 Parse & Index All PDFs", type="primary"):
+        if not uploaded_pdfs:
+            st.error("Please upload at least one PDF first.")
         else:
-            # Save PDF temporarily to disk — pymupdf needs a real file path
+            from utils.pdf_importer import import_pdf
             import tempfile
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(uploaded_pdf.getvalue())
-                tmp_pdf_path = tmp.name
 
-            with st.spinner("Parsing PDF and indexing images... this may take a minute."):
-                from utils.pdf_importer import import_pdf
-                indexed, skipped = import_pdf(tmp_pdf_path, remove_bg=remove_bg)
-                st.cache_resource.clear()
+            total_indexed = 0
+            total_skipped = 0
 
-            # Clean up temp file
-            Path(tmp_pdf_path).unlink(missing_ok=True)
+            # Progress bar so user knows something is happening
+            progress = st.progress(0)
+            status   = st.empty()
 
-            st.success(f"✅ Done — Indexed: {indexed} | Skipped: {skipped}")
+            for i, uploaded_pdf in enumerate(uploaded_pdfs):
+                status.info(f"Processing {uploaded_pdf.name} ({i+1}/{len(uploaded_pdfs)})...")
+
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(uploaded_pdf.getvalue())
+                    tmp_pdf_path = tmp.name
+
+                indexed, skipped = import_pdf(tmp_pdf_path)
+                Path(tmp_pdf_path).unlink(missing_ok=True)
+
+                total_indexed += indexed
+                total_skipped += skipped
+                progress.progress((i + 1) / len(uploaded_pdfs))
+
+            st.cache_resource.clear()
+            status.empty()
+            st.success(f"✅ All done — Indexed: {total_indexed} | Skipped: {total_skipped}")
  
 # ══════════════════════════════════════════════════════════════════════════
 # TAB 3 — DATABASE OVERVIEW
@@ -357,3 +373,32 @@ with tab3:
     else:
         for vendor in vendors:
             st.markdown(f"**{vendor['vendor_name']}** — {vendor['contact'] or 'No contact'}")
+
+    st.subheader("🔍 Quick Fabric Lookup")
+    lookup_code = st.text_input("Enter Fabric Code to verify (e.g., ASF490)")
+
+    if lookup_code:
+        conn = get_connection()
+        cursor = conn.cursor()
+        # Search the database for the code
+        cursor.execute("""
+            SELECT f.fabric_code, f.price, f.image_path, v.vendor_name 
+            FROM fabrics f 
+            JOIN vendors v ON f.vendor_id = v.vendor_id 
+            WHERE f.fabric_code LIKE ?
+        """, (f"%{lookup_code}%",))
+        
+        matches = cursor.fetchall()
+        conn.close()
+
+        if matches:
+            for match in matches:
+                col1, col2 = st.columns([1, 2])
+                with col1:
+                    st.image(match["image_path"], width=150)
+                with col2:
+                    st.write(f"**Code:** {match['fabric_code']}")
+                    st.write(f"**Vendor:** {match['vendor_name']}")
+                    st.write(f"**Path:** `{match['image_path']}`")
+        else:
+            st.error("Fabric code not found in database.")

@@ -99,23 +99,37 @@ def add_vendor(vendor_name: str, contact: str = None) -> int:
     return vendor_id
 
 
-def add_fabric(vendor_id: int, image_path: str, faiss_id: int,
-               fabric_code: str = None, price: float = None) -> int:
-    # Inserts a new fabric row. Returns fabric_id.
-    # faiss_id must be passed in — this is the sync contract with FAISS.
+def add_fabric(vendor_id: int, image_path: str, fabric_code: str = None, price: float = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
+    
+    # 1. Attempt to insert (IGNORE if the image_path already exists)
     cursor.execute("""
         INSERT OR IGNORE INTO fabrics (vendor_id, image_path, faiss_id, fabric_code, price)
-        VALUES (?, ?, ?, ?, ?)
-    """, (vendor_id, str(image_path), faiss_id, fabric_code, price))
-    conn.commit()
+        VALUES (?, ?, -1, ?, ?)
+    """, (vendor_id, str(image_path), fabric_code, price))
+    
+    # 2. THE DUPLICATE CATCHER
+    if cursor.rowcount == 0:
+        # SQLite ignored it because it's a duplicate image.
+        # We return None so the importer skips adding a duplicate vector to FAISS.
+        conn.close()
+        return None
+        
+    conn.commit() # Commit the new row
 
+    # 3. Get the auto-generated fabric_id for the brand new row
     cursor.execute("SELECT fabric_id FROM fabrics WHERE image_path = ?", (str(image_path),))
     row = cursor.fetchone()
-    conn.close()
-    return row["fabric_id"] if row else None
+    fabric_id = row["fabric_id"] if row else None
 
+    # 4. Update the faiss_id to perfectly match the fabric_id
+    if fabric_id:
+        cursor.execute("UPDATE fabrics SET faiss_id = ? WHERE fabric_id = ?", (fabric_id, fabric_id))
+        conn.commit()
+
+    conn.close()
+    return fabric_id
 
 def update_fabric_details(fabric_id: int, price: float = None, fabric_code: str = None):
     # Updates price and/or fabric code for an existing fabric.
@@ -183,7 +197,7 @@ def get_database_stats() -> dict:
     return {"total_vendors": vendors, "total_fabrics": fabrics}
 
 
-def get_next_faiss_id() -> int:
+#def get_next_faiss_id() -> int:
     # Returns what the next FAISS index position should be.
     # FAISS vectors are 0-indexed. If 50 vectors exist, next id = 50.
     # This is called by indexer.py before adding a new vector.
